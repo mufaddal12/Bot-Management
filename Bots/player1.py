@@ -346,7 +346,7 @@ while g.isGameOver() == False:
     else:
         # UCTPlayGame()
         p = g.GetMoves()
-        time.sleep(2)
+
         print(p[0])
         g.DoMove(p[0])
     # g.display()

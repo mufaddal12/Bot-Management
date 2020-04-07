@@ -202,11 +202,15 @@ from time import sleep
 # argv[2] : Extension of bot 2 : "c" or "cpp" or "py"
 # argv[3] : Name of file in which logs are to be written
 # argv[4] : If bot1 is playing as player 2 or not : "True" or "False"
-print(argv)
+# print(argv)
 (bot1Ext, bot2Ext, logFile, isP2) = (argv[1], argv[2], argv[3], argv[4])
 
 # botFile is where bots are kept
 botFile = "Bots/"
+
+# directory where log file is to be saved
+logs = "Matches/"
+
 # Time limit given to different types of bots
 time_limits = {
     "cpp": 3000,
@@ -214,8 +218,9 @@ time_limits = {
     "py": 6000,
 }
 
+
 # Get the executable file of the validation code (in current directory)
-call("g++ -o val val.cpp".split())
+call("g++ -std=c++11 -o val val.cpp".split())
 
 # Don't know the use of this as of now
 plist1 = ["prlimit", "-p", ""]
@@ -224,7 +229,28 @@ plist2 = ["prlimit", "-p", ""]
 
 def logWrite(msg):
     # Writing logs to logfile (name mentioned in argv[3])
+    l = open(logs + argv[3], "a")
+    l.write(str(msg) + "\n")
+    l.close()
     print(msg)
+
+
+class EndGameError(Exception):
+    def __init__(self, string, winner):
+        super(EndGameError, self).__init__(string)
+        if winner is 0:
+            self.winner = 100 + 1
+        elif winner is 1:
+            self.winner = 100 + 2
+        elif winner is -1:
+            self.winner = 100
+
+
+def handler(signum, frame):
+    raise IOError("No input recieved")
+
+
+signal(SIGALRM, handler)
 
 
 class Process:
@@ -232,25 +258,33 @@ class Process:
         self.ext = ext
         self.player = player
         self.timeLimit = timeLimit
+        self.plist = ["prlimit"]
         if otherArgs is None:
             self.argList = self.getArgList(ext, player)
-
+            self.isVal = False
+            print(" ".join(self.argList))
+            self.proc = Popen(args=self.argList, stdin=PIPE, stdout=PIPE)
+            # self.plist[2] = str(self.proc.pid)
+            self.plist.append(str(self.proc.pid))
+            print(" ".join(self.plist))
+            call(self.plist)
+            self.pollObj = poll()
+            self.pollObj.register(self.proc.stdout.fileno(), POLLIN)
         else:
             self.argList = otherArgs
-
-        self.proc = Popen(args=self.argList, stdin=PIPE, stdout=PIPE)
-        self.pollObj = poll()
-        self.pollObj.register(self.proc.stdout.fileno())
+            self.isVal = True
+            self.proc = Popen(args=self.argList, stdin=PIPE, stdout=PIPE)
 
     def getArgList(self, exType, p):
-        # lis = ["stdbuf", "-o0", "-i0", "-e0"]
         lis = []
+        lis = ["stdbuf", "-o0", "-i0", "-e0"]
         if exType == "cpp" or exType == "c":
-            lis = lis + ["./" + botFile + "player" + str(p)]
-            plist1.extend(("--nofile=5", "--nproc=500", "--as=21460"))
+            lis = lis + ["./" + botFile + "player" + str(p + 1)]
+            # lis = lis + []
+            self.plist.extend(("--nofile=5", "--nproc=500", "-p"))  # "--as=21460"
         elif exType == "py":
-            lis = lis + ["python", botFile + "player" + str(p) + ".py"]
-            plist1.extend(("--nofile=5", "--nproc=500", "--as=32740"))
+            lis = lis + ["python", botFile + "player" + str(p + 1) + ".py"]
+            self.plist.extend(("--nofile=5", "--nproc=500", "-p"))  # "--as=32740"
         return lis
 
     def write(self, string):
@@ -259,22 +293,31 @@ class Process:
         self.proc.stdin.flush()
 
     def read(self):
+        if self.isVal:
+            ret = self.proc.stdout.readline()
+            ret = ret.decode().strip()
+            return ret
+
         temp = self.pollObj.poll(self.timeLimit)
+
         if temp:
             if temp[0][1] is POLLIN:
+                alarm(1)
                 ret = self.proc.stdout.readline()
+                alarm(0)
                 ret = ret.decode().strip()
+
                 return ret
-        return ""
+        endGame = EndGameError(
+            "v," + str(self.player) + "," + "NO IO DETECTED", self.player
+        )
+        print(self.isRunning())
+        raise endGame
 
     def writeAndRead(self, string=""):
         self.write(string)
-        temp = self.pollObj.poll(self.timeLimit)
-        if temp:
-            if temp[0][1] is POLLIN:
-                val = self.read()
-                return val
-        return ""
+        val = self.read()
+        return val
         # raise Exception  # make exception class and raise an exception object
 
     def isRunning(self):
@@ -284,11 +327,34 @@ class Process:
         self.proc.kill()
 
 
-bot1 = Process(ext=bot1Ext, player=1, timeLimit=time_limits[bot1Ext])
+try:
+    bot1 = Process(ext=bot1Ext, player=0, timeLimit=time_limits[bot1Ext])
+    bot2 = Process(ext=bot2Ext, player=1, timeLimit=time_limits[bot2Ext])
+    val = Process(timeLimit=1000, otherArgs="stdbuf -o0 -i0 -e0 ./val".split())
 
-bot2 = Process(ext=bot2Ext, player=2, timeLimit=time_limits[bot2Ext])
+except Exception as e:
+    print("Error occured in process creation")
+    end_code(-1)
 
-val = Process(timeLimit=1000, otherArgs="./val".split())
+
+def validate(move, pl):
+    move = move.strip()
+    out = val.writeAndRead(move)
+    if out == "VALID":
+        ret = val.read()
+        return ret
+    elif out == "WIN":
+        end_move = val.read()
+        who_won = val.read()
+        how_won = val.read()
+        eg = EndGameError("w," + who_won + "," + end_move + "," + how_won, int(who_won))
+        raise eg
+    elif out == "DRAW":
+        eg = EndGameError("GAME DRAWN,", -1)
+        raise eg
+    else:
+        eg = EndGameError("l," + str(pl - 1) + "," + move + "," + out, pl - 1)
+        raise eg
 
 
 def end_code(exit_code):
@@ -309,39 +375,50 @@ if isP2 == "True":
 bot2.write("1")
 
 move = "0"
-
-while(1):
+while 1:
     if bot1.isRunning():
-        # try
-        move = bot1.writeAndRead(move.strip())
+        try:
+
+            move = bot1.writeAndRead(move.strip())
+
+        except EndGameError as eg:
+            logWrite(eg)
+            end_code(eg.winner)
+        except IOError as io:
+            print(io)
+            end_code(101)
     else:
         logWrite("v,0,PREMATURE TERMINATION")
         end_code(102)
 
-    #a = input()
+    # a = input()
 
     # If program reaches here means bot1 returned a string
-    validity = val.writeAndRead(move.strip())
-    if validity.strip() != move.strip():
-        # print(validity)
-        logWrite("v,0," + move + " " + validity)
-        end_code(102)
+    try:
+        move = validate(move, 1)
+    except EndGameError as eg:
+        logWrite(eg)
+        end_code(eg.winner)
 
     # If program reaches here means string returned by bot1 is valid
     logWrite("v,0," + move)
 
     if bot2.isRunning():
-        move = bot2.writeAndRead(move.strip())
+        try:
+            move = bot2.writeAndRead(move.strip())
+        except EndGameError as eg:
+            logWrite(eg)
+            end_code(eg.winner)
     else:
         logWrite("v,1,PREMATURE TERMINATION")
         end_code(101)
 
     # If program reaches here means bot2 returned a string
-    validity = val.writeAndRead(move.strip())
-    if validity.strip() != move.strip():
-        # print(validity)
-        logWrite("v,1," + move + " " + validity)
-        end_code(101)
+    try:
+        move = validate(move, 2)
+    except EndGameError as eg:
+        logWrite(eg)
+        end_code(eg.winner)
 
     # If program reaches here means string returned by bot2 is valid
     logWrite("v,1," + move)

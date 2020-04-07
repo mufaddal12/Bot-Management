@@ -419,7 +419,7 @@ void play()
 			}
 			else
 			{
-				//cout << "VALID\n";
+				cout << "VALID\n";
 				cout << s << endl;
 			}
 		}
@@ -456,7 +456,7 @@ void play()
 			}
 			else
 			{
-				//cout << "VALID\n";
+				cout << "VALID\n";
 				cout << s << "\n";
 			}
 		}

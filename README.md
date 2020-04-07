@@ -1,6 +1,6 @@
 Things left to do:
 1. process address space limit or poll() class object time limit problem
-
+2. address space has been increased to 20MB for cpp bots and 40 MB for python for time being but has to be reduced(problem above)
 
 Running the bm:
 argv is a list of arguments passed along with the command to call this program

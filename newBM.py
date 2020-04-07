@@ -1,7 +1,7 @@
 # new approach to the code
 
 from subprocess import call, Popen, PIPE
-from select import poll, POLLIN, POLLOUT
+from select import poll, POLLIN, POLLOUT, POLLERR, POLLHUP, POLLPRI, POLLNVAL
 from signal import signal, alarm, SIGALRM, SIGPIPE, SIG_DFL
 from sys import exit, argv
 from time import sleep
@@ -33,10 +33,6 @@ time_limits = {
 # Get the executable file of the validation code (in current directory)
 call("g++ -std=c++11 -o val val.cpp".split())
 
-# Don't know the use of this as of now
-plist1 = ["prlimit", "-p", ""]
-plist2 = ["prlimit", "-p", ""]
-
 
 def logWrite(msg):
     # Writing logs to logfile (name mentioned in argv[3])
@@ -46,6 +42,7 @@ def logWrite(msg):
     print(msg)
 
 
+# For handling end of the game depending on a win, invalid move, or a draw
 class EndGameError(Exception):
     def __init__(self, string, winner):
         super(EndGameError, self).__init__(string)
@@ -66,82 +63,116 @@ signal(SIGALRM, handler)
 
 class Process:
     def __init__(self, ext=None, player=None, timeLimit=None, otherArgs=None):
-        self.ext = ext
+        # Each process will be an object of class Process
+
         self.player = player
         self.timeLimit = timeLimit
-        self.plist = ["prlimit"]
+
+        # prlimit command is used for limiting resource given to a process
+        # "--as=21460"
+
+        # otherArgs will be for validation process that will be opened as a Process
         if otherArgs is None:
-            self.argList = self.getArgList(ext, player)
-            self.isVal = False
-            print(" ".join(self.argList))
-            self.proc = Popen(args=self.argList, stdin=PIPE, stdout=PIPE)
-            # self.plist[2] = str(self.proc.pid)
+            # argList is a list of commands for running a proccess/program which may be c, cpp or python
+            self.plist = [
+                "prlimit",
+                "--nofile=5",
+                "--nproc=500",
+                "--as=20000000",
+                "-p",
+            ]
+            argList = self.getArgList(ext, player)
+            self.isVal = False  # True if object is of validation
+            print(argList)
+            self.proc = Popen(argList, stdin=PIPE, stdout=PIPE)
+
+            # Popen.pid is a unique id assigned to each process and using this, prlimit can limit the resources assigned to it
             self.plist.append(str(self.proc.pid))
             print(" ".join(self.plist))
-            call(self.plist)
             self.pollObj = poll()
             self.pollObj.register(self.proc.stdout.fileno(), POLLIN)
+            call(self.plist)
+
+            # poll() class if for handling events in a process like if it is ready to give output or no
+
         else:
+            # This section is for validation process
             self.argList = otherArgs
             self.isVal = True
             self.proc = Popen(args=self.argList, stdin=PIPE, stdout=PIPE)
 
     def getArgList(self, exType, p):
-        lis = []
+        # This function returns a list of terminal commands (depending on type of bot) needed for running the bot
         lis = ["stdbuf", "-o0", "-i0", "-e0"]
         if exType == "cpp" or exType == "c":
             lis = lis + ["./" + botFile + "player" + str(p + 1)]
-            # lis = lis + []
-            self.plist.extend(("--nofile=5", "--nproc=500", "-p"))  # "--as=21460"
+            print(lis)
         elif exType == "py":
-            lis = lis + ["python", botFile + "player" + str(p + 1) + ".py"]
-            self.plist.extend(("--nofile=5", "--nproc=500", "-p"))  # "--as=32740"
+            lis = lis + ["python3", botFile + "player" + str(p + 1) + ".py"]
+            self.plist[3] = "--as=40000000"  # "--as=32740"
         return lis
 
     def write(self, string):
         string = string + "\n"
+        # We cannot pass a string datatype to a process, it has to be a string of bytes
+        # str.encode(string) converts string from string datatype to string of bytes needed
         self.proc.stdin.write(str.encode(string))
         self.proc.stdin.flush()
 
     def read(self):
+
         if self.isVal:
+            # No need to consider time limit for validation code
             ret = self.proc.stdout.readline()
             ret = ret.decode().strip()
             return ret
 
+        # poll().poll(time) waits for time amount of time till the process registered with the poll() object creates an event
+        # if the event is created within time, then a non empty list is returned containing details of type of event occuring
         temp = self.pollObj.poll(self.timeLimit)
 
         if temp:
+            # If the process is ready to give an output, then the event is a tuple conaining
+            # POLLIN(which is just an integer to denote output event from the process)
             if temp[0][1] is POLLIN:
-                alarm(1)
+                # alarm(1)
                 ret = self.proc.stdout.readline()
-                alarm(0)
+                # alarm(0)
+                # The output ret from the process is a string of bytes
+                # so ret.decode() returns its corresponding conversion to string datatype
                 ret = ret.decode().strip()
 
                 return ret
+
+        # If the event isnt created within time or the event isn't POLLIN, then throw an error
         endGame = EndGameError(
             "v," + str(self.player) + "," + "NO IO DETECTED", self.player
         )
-        print(self.isRunning())
+
         raise endGame
 
     def writeAndRead(self, string=""):
+        # Write string to a process and read the output from the process
         self.write(string)
         val = self.read()
         return val
-        # raise Exception  # make exception class and raise an exception object
 
     def isRunning(self):
+        # This method returns true if the process is still running
+        # Popen.poll() returns
+        # None : process is running
+        # Other integers : the return value from the process
         return self.proc.poll() is None
 
     def kill(self):
+        # Kill the process duh
         self.proc.kill()
 
 
 try:
     bot1 = Process(ext=bot1Ext, player=0, timeLimit=time_limits[bot1Ext])
     bot2 = Process(ext=bot2Ext, player=1, timeLimit=time_limits[bot2Ext])
-    val = Process(timeLimit=1000, otherArgs="stdbuf -o0 -i0 -e0 ./val".split())
+    val = Process(otherArgs="stdbuf -o0 -i0 -e0 ./val".split())
 
 except Exception as e:
     print("Error occured in process creation")
@@ -233,9 +264,6 @@ while 1:
 
     # If program reaches here means string returned by bot2 is valid
     logWrite("v,1," + move)
-
-a = input()
-
 
 """
 from subprocess import call, Popen, PIPE

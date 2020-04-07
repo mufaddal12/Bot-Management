@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define maxD 1
+#define maxD 3
 #define infinity 1000000
 
 using namespace std::chrono;
